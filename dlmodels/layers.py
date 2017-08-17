@@ -51,6 +51,24 @@ def typeas(x, y):
             x = torch.DoubleTensor(x)
     return x.type_as(y)
 
+def pixels_to_batch(x):
+    b, d, h, w = x.size()
+    return x.permute(0, 2, 3, 1).contiguous().view(b*h*w, d)
+
+class PixelsToBatch(nn.Module):
+    def forward(self, x):
+        return pixels_to_batch(x)
+
+class WeightedGrad(autograd.Function):
+    def forward(self, input, weights):
+        self.weights = weights
+        return input
+    def backward(self, grad_output):
+        return grad_output * self.weights, None
+
+def weighted_grad(x, y):
+    return WeightedGrad()(x, y)
+
 class Gpu(nn.Module):
     def __init__(self):
         self.use_cuda = None
@@ -269,3 +287,4 @@ class Lstm2(nn.Module):
         vert = self.vlstm(horizT)
         vertT = vert.permute(0, 1, 3, 2).contiguous()
         return vertT
+

@@ -25,11 +25,11 @@ scripts = """
 """.split()
 
 setup(
-    name='dlpipes',
+    name='dlmodels',
     version='v0.0',
     author="Thomas Breuel",
     description="Pipes for deep learning.",
-    packages=["dlpipes"],
+    packages=["dlmodels"],
     # data_files= [('share/ocroseg', models)],
     scripts=scripts,
 )
