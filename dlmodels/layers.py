@@ -14,6 +14,7 @@ Textline2Img
 import numpy as np
 import torch
 from torch import nn
+from torch import autograd
 from torch.autograd import Variable
 from torch.legacy import nn as legnn
 
