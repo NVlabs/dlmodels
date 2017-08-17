@@ -18,10 +18,6 @@ assert sys.version_info[0] == 2 and sys.version_info[1] >= 7,\
 
 
 scripts = """
-    tarshards
-    shardindex
-    show-input
-    show-model
 """.split()
 
 setup(
@@ -30,6 +26,5 @@ setup(
     author="Thomas Breuel",
     description="Pipes for deep learning.",
     packages=["dlmodels"],
-    # data_files= [('share/ocroseg', models)],
     scripts=scripts,
 )
