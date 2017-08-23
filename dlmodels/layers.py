@@ -2,7 +2,7 @@
 # See the LICENSE file for licensing terms (BSD-style).
 
 __all__ = """
-Gpu 
+Gpu
 Img2Seq ImgMaxSeq ImgSumSeq
 Lstm1 Lstm1to0
 Lstm2 Lstm2to1
@@ -70,8 +70,17 @@ class WeightedGrad(autograd.Function):
 def weighted_grad(x, y):
     return WeightedGrad()(x, y)
 
+class Info(nn.Module):
+    def __init__(self, info=""):
+        nn.Module.__init__(self)
+        self.info = info
+    def forward(self, x):
+        print "Info", self.info, x.size(), x.min(), x.max()
+        return x
+
 class Gpu(nn.Module):
     def __init__(self):
+        nn.Module.__init__(self)
         self.use_cuda = None
     def cpu(self):
         self.use_cuda = None
@@ -83,14 +92,32 @@ class Gpu(nn.Module):
         else:
             return x.cuda(self.use_cuda)
 
+class Check(nn.Module):
+    def __init__(self, *shape, **kw):
+        nn.Module.__init__(self)
+        self.expected = tuple(shape)
+        self.valid = kw.get("valid", (-1e-5, 1+1e-5))
+    def forward(self, x):
+        expected_shape = self.expected
+        actual_shape = tuple(x.size())
+        assert len(actual_shape)==len(expected_shape)
+        for i in range(len(actual_shape)):
+            assert expected_shape[i]<0 or expected_shape[i]==actual_shape[i], \
+                   (expected_shape, actual_shape, i)
+        assert x.min() >= self.valid[0], (x.min(), self.valid)
+        assert x.max() <= self.valid[1], (x.max(), self.valid)
+        return x
+
 class Reorder(nn.Module):
     def __init__(self, old, new):
+        nn.Module.__init__(self)
         self.permutation = tuple([old.find(c) for c in new])
     def forward(self, x):
         return x.permute(*self.permutation)
 
 class Permute(nn.Module):
     def __init__(self, *args):
+        nn.Module.__init__(self)
         self.permutation = args
     def forward(self, x):
         return x.permute(*self.permutation)
@@ -288,4 +315,3 @@ class Lstm2(nn.Module):
         vert = self.vlstm(horizT)
         vertT = vert.permute(0, 1, 3, 2).contiguous()
         return vertT
-

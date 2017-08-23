@@ -114,13 +114,21 @@ class Composable(object):
         return self.__call__(base)
 
 
-def wrapup(f, order=True):
+def wrapup0(f, order=True):
     def create(*args, **kw):
+        print "create", args, kw
         def construct(arg):
+            print "construct", args, kw
             return arg.add(f(*args, **kw))
         return construct
     return create
 
+def wrapup(f, order=True):
+    def create(*args, **kw):
+        def construct(arg):
+            return arg.add(f(*args, **kw))
+        return Composable(construct)
+    return create
 
 Sig = wrapup(nn.Sigmoid)
 Tanh = wrapup(nn.Tanh)
@@ -266,6 +274,8 @@ ImgSumSeq = wrapup(layers.ImgSumSeq)
 Gpu = wrapup(layers.Gpu)
 Reorder = wrapup(layers.Reorder)
 Permute = wrapup(layers.Permute)
+Check = wrapup(layers.Check)
+Info = wrapup(layers.Info)
 
 
 def RowwiseLSTM(*args, **kw):
@@ -308,4 +318,3 @@ def Lstm1to0(*args, **kw):
 def Lstm2to0(n1, n2=None):
     n2 = n2 or n1
     return Lstm2to1(n1) | Lstm1to0(N2)
-
