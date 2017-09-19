@@ -71,7 +71,10 @@ class Seq(nn.Sequential):
         return result
 
     def __or__(self, other):
-        new_list = self._raw_modules + [other]
+        if isinstance(other, Seq):
+            new_list = self._raw_modules + other._raw_modules
+        else:
+            new_list = self._raw_modules + [other]
         return Seq(*new_list)
 
     def __pow__(self, n):
