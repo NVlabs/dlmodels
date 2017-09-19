@@ -5,6 +5,8 @@ import layers
 import helpers
 import specs
 import loadable
+import specs2
 
 specops = specs.LocalImport(specs)
+specops2 = specs.LocalImport(specs2)
 

@@ -34,287 +34,256 @@ class LocalImport(object):
     del self.frame
 
 
-permitted_orders = [None] + "BLD BDL BDWH BWHD BD".split()
-
-
 class Seq(nn.Sequential):
-    def __init__(self, shape, order=None):
+    def __init__(self, *modules):
         nn.Sequential.__init__(self)
-        assert order in permitted_orders
-        self.value = Variable(torch.rand(*shape), volatile=True)
-        self.order = order
-        self.initial = self.value
-        self.initial_order = self.order
+        self._raw_modules = list(modules)
+        self._input_shape = None
+        self._output_shape = None
 
-    def dims(self):
-        return self.order
+    def size(self):
+        return self._output_shape
 
-    def check(self, order):
-        assert order in permitted_orders
-        if order is not None and self.order is not None:
-            assert order == self.order
+    def infer(self, shape):
+        sample = Variable(torch.randn(*shape)) # FIXME
+        shape = tuple(int(x) for x in sample.size())
+        self._input_shape = shape
+        for i, m in enumerate(self._raw_modules):
+            if isinstance(m, (Inference, Seq)):
+                m = m.infer(shape)
+            sample = m.forward(sample)
+            shape = tuple(sample.size())
+            self.add_module("%d"%i, m)
+        self._output_shape = tuple(int(x) for x in shape)
+        return self
 
-    def rank(self):
-        return len(self.value.size())
-
-    def size(self, index=None):
-        if index is None:
-            return self.value.size()
-        else:
-            return self.value.size(index)
-
-    def add(self, modules, name=None, order=True):
-        old_order = self.order
-        if name is None:
-            name = str(len(self._modules))
-        if not isinstance(modules, list):
-            modules = [modules]
-        for m in modules:
-            self.value = m(self.value)
-            self.add_module(name, m)
-        if order == True:
-            self.order = old_order
-        else:
-            assert order in permitted_orders
-            self.order = order
+    def create(self, *args):
+        self.infer(args)
         return self
 
     def __repr__(self):
-        result = "Input: %s %s\n" % (
-            tuple(self.initial.size()), self.initial_order)
-        result += nn.Sequential.__repr__(self) + "\n"
-        result += "Output: %s %s\n" % (tuple(self.value.size()), self.order)
+        result = "%s -> %s\n" % (self._input_shape, self._output_shape)
+        result += nn.Sequential.__repr__(self)
+        return result
+    def __str__(self):
+        result = "%s -> %s\n" % (self._input_shape, self._output_shape)
+        result += nn.Sequential.__str__(self)
         return result
 
-
-class Composable(object):
-    def __init__(self, f, g=None):
-        self.f = f
-        self.g = g
-        self.stacks = {}
-
-    def __or__(self, g):
-        return Composable(self, g)
+    def __or__(self, other):
+        new_list = self._raw_modules + [other]
+        return Seq(*new_list)
 
     def __pow__(self, n):
-        assert n > 0
-        result = self
-        for i in range(1, n):
-            result = Composable(result, self)
-        return result
+        new_list = self._raw_modules * n
+        return Seq(*new_list)
 
-    def __call__(self, *args, **kw):
-        if self.g is None:
-            return self.f(*args, **kw)
-        else:
-            return self.g(self.f(*args, **kw))
+Sig = nn.Sigmoid
+Tanh = nn.Tanh
+Relu = nn.ReLU
+Smax = nn.Softmax
+LSmax = nn.LogSoftmax
+Reshape = layers.Viewer
+PixelShuffle = nn.PixelShuffle
 
-    def create(self, *args, **kw):
-        base = Seq(args, order=kw.get("order"))
-        return self.__call__(base)
-
-
-def wrapup0(f, order=True):
-    def create(*args, **kw):
-        print "create", args, kw
-        def construct(arg):
-            print "construct", args, kw
-            return arg.add(f(*args, **kw))
-        return construct
-    return create
-
-def wrapup(f, order=True):
-    def create(*args, **kw):
-        def construct(arg):
-            return arg.add(f(*args, **kw))
-        return Composable(construct)
-    return create
-
-Sig = wrapup(nn.Sigmoid)
-Tanh = wrapup(nn.Tanh)
-Relu = wrapup(nn.ReLU)
-Smax = wrapup(nn.Softmax)
-LSmax = wrapup(nn.LogSoftmax)
-Reshape = wrapup(layers.Viewer)
-PixelShuffle = wrapup(nn.PixelShuffle)
-# Squeeze
-# Expand
-# Select
-
+class Inference(object):
+    def __init__(self, f):
+        self.f = f
+    def infer(self, shape):
+        return self.f(shape)
+    def create(self, *args):
+        return self.infer(args)
+    def __or__(self, other):
+        return Seq(self, other)
+    def __pow__(self, n):
+        return Seq(*([self]*n))
 
 def Bn(*args, **kw):
-    def construct(arg):
-        rank = len(arg.size())
+    def construct(shape):
+        rank = len(shape)
         if rank == 5:
-            return arg.add(nn.BatchNorm3d(arg.size(1), *args, **kw))
+            return nn.BatchNorm3d(shape[1], *args, **kw)
         elif rank == 4:
-            return arg.add(nn.BatchNorm2d(arg.size(1), *args, **kw))
+            return nn.BatchNorm2d(shape[1], *args, **kw)
         elif rank == 3:
-            return arg.add(nn.BatchNorm1d(arg.size(1), *args, **kw))
+            return nn.BatchNorm1d(shape[1], *args, **kw)
         elif rank == 2:
-            return arg.add(nn.BatchNorm1d(arg.size(1), *args, **kw))
+            return nn.BatchNorm1d(shape[1], *args, **kw)
         raise Exception("%d: bad rank for Bn")
-    return Composable(construct)
+    return Inference(construct)
 
 
 def Mp(*args, **kw):
-    def construct(arg):
-        rank = len(arg.size())
-        if rank == 3:
-            return arg.add(nn.MaxPool3d(*args, **kw))
+    def construct(shape):
+        rank = len(shape)
+        if rank == 5:
+            return nn.MaxPool3d(*args, **kw)
         elif rank == 4:
-            return arg.add(nn.MaxPool2d(*args, **kw))
+            return nn.MaxPool2d(*args, **kw)
         elif rank == 3:
-            return arg.add(nn.MaxPool1d(*args, **kw))
+            return nn.MaxPool1d(*args, **kw)
         raise Exception("%d: bad rank for Cl")
-    return Composable(construct)
+    return Inference(construct)
 
 
 def Ap(*args, **kw):
-    def construct(arg):
-        rank = len(arg.size())
-        if rank == 3:
-            return arg.add(nn.AvgPool3d(*args, **kw))
+    def construct(shape):
+        rank = len(shape)
+        if rank == 5:
+            return nn.AvgPool3d(*args, **kw)
         elif rank == 4:
-            return arg.add(nn.AvgPool2d(*args, **kw))
+            return nn.AvgPool2d(*args, **kw)
         elif rank == 3:
-            return arg.add(nn.AvgPool1d(*args, **kw))
+            return nn.AvgPool1d(*args, **kw)
         raise Exception("%d: bad rank for Cl")
-    return Composable(construct)
+    return Inference(construct)
 
 
 def Cl(out_channels, kernel_size=3, stride=1, padding=None, dilation=1, groups=1, bias=True):
-    def construct(arg):
+    def construct(shape):
         ksize = kernel_size
         pad = padding
-        assert arg.rank() > 2
+        rank = len(shape)
+        assert rank > 2
         if isinstance(ksize, int):
-            ksize = tuple([ksize] * (arg.rank() - 2))
+            ksize = tuple([ksize] * (rank - 2))
         if pad is None:
             pad = tuple([x // 2 for x in ksize])
-        rank = arg.rank()
+        rank = len(shape)
         if rank == 5:
-            return arg.add(nn.Conv3d(arg.size(1), out_channels, ksize,
-                                     stride, pad, dilation, groups, bias))
+            return nn.Conv3d(shape[1], out_channels, ksize,
+                                 stride, pad, dilation, groups, bias)
         elif rank == 4:
-            return arg.add(nn.Conv2d(arg.size(1), out_channels, ksize,
-                                     stride, pad, dilation, groups, bias))
+            return nn.Conv2d(shape[1], out_channels, ksize,
+                                 stride, pad, dilation, groups, bias)
         elif rank == 3:
-            return arg.add(nn.Conv1d(arg.size(1), out_channels, ksize,
-                                     stride, pad, dilation, groups, bias))
+            return nn.Conv1d(shape[1], out_channels, ksize,
+                                 stride, pad, dilation, groups, bias)
         raise Exception("%d: bad rank for Cl")
-    return Composable(construct)
+    return Inference(construct)
 
 
-def Cr(*args, **kw): return Cl(*args, **kw) | Relu()
+def Cr(*args, **kw): return Seq(Cl(*args, **kw), Relu())
 
 
-def Ct(*args, **kw): return Cl(*args, **kw) | Tanh()
+def Ct(*args, **kw): return Seq(Cl(*args, **kw), Tanh())
 
 
-def Cs(*args, **kw): return Cl(*args, **kw) | Sig()
+def Cs(*args, **kw): return Seq(Cl(*args, **kw), Sig())
 
 
-def Cbl(*args, **kw): return Cl(*args, bias=False, **kw) | Bn()
+def Cbl(*args, **kw): return Seq(Cl(*args, bias=False, **kw), Bn())
 
 
-def Cbr(*args, **kw): return Cl(*args, bias=False, **kw) | Bn() | Relu()
+def Cbr(*args, **kw): return Seq(Cl(*args, bias=False, **kw), Bn(), Relu())
 
 
-def Cbt(*args, **kw): return Cl(*args, bias=False, **kw) | Bn() | Tanh()
+def Cbt(*args, **kw): return Seq(Cl(*args, bias=False, **kw), Bn(), Tanh())
 
 
-def Cbs(*args, **kw): return Cl(*args, bias=False, **kw) | Bn() | Sig()
+def Cbs(*args, **kw): return Seq(Cl(*args, bias=False, **kw), Bn(), Sig())
 
 
 def Dws(n, **kw): return Cl(n, 1, **kw)
 
 
 def Flat():
-    def construct(arg):
-        rank = len(arg.size())
+    def construct(shape):
+        rank = len(shape)
         assert rank > 2
-        new_depth = np.prod(list(arg.size())[1:])
-        return arg.add(layers.Viewer(-1, new_depth))
-    return Composable(construct)
+        new_depth = np.prod(shape[1:])
+        return layers.Viewer(-1, new_depth)
+    return Inference(construct)
 
 
 def Fl(*args, **kw):
-    def construct(arg):
-        assert len(arg.size()) == 2
-        return arg.add(nn.Linear(arg.size(1), *args, **kw))
-    return Composable(construct)
+    def construct(shape):
+        assert len(shape) == 2
+        return nn.Linear(shape[1], *args, **kw)
+    return Inference(construct)
 
 
-def Fr(*args, **kw): return Fl(*args, **kw) | Relu()
+def Fr(*args, **kw): return Seq(Fl(*args, **kw), Relu())
 
 
-def Ft(*args, **kw): return Fl(*args, **kw) | Tanh()
+def Ft(*args, **kw): return Seq(Fl(*args, **kw), Tanh())
 
 
-def Fs(*args, **kw): return Fl(*args, **kw) | Sig()
+def Fs(*args, **kw): return Seq(Fl(*args, **kw), Sig())
 
 
-def Fbl(*args, **kw): return Fl(*args, bias=False, **kw) | Bn()
+def Fbl(*args, **kw): return Seq(Fl(*args, bias=False, **kw), Bn())
 
 
-def Fbr(*args, **kw): return Fl(*args, bias=False, **kw) | Bn() | Relu()
+def Fbr(*args, **kw): return Seq(Fl(*args, bias=False, **kw), Bn(), Relu())
 
 
-def Fbt(*args, **kw): return Fl(*args, bias=False, **kw) | Bn() | Tanh()
+def Fbt(*args, **kw): return Seq(Fl(*args, bias=False, **kw), Bn(), Tanh())
 
 
-def Fbs(*args, **kw): return Fl(*args, bias=False, **kw) | Bn() | Sig()
+def Fbs(*args, **kw): return Seq(Fl(*args, bias=False, **kw), Bn(), Sig())
 
 
-Textline2Img = wrapup(layers.Textline2Img)
-Img2Seq = wrapup(layers.Img2Seq)
-ImgMaxSeq = wrapup(layers.ImgMaxSeq)
-ImgSumSeq = wrapup(layers.ImgSumSeq)
-Gpu = wrapup(layers.Gpu)
-Reorder = wrapup(layers.Reorder)
-Permute = wrapup(layers.Permute)
-Check = wrapup(layers.Check)
-Info = wrapup(layers.Info)
+Textline2Img = layers.Textline2Img
+Img2Seq = layers.Img2Seq
+ImgMaxSeq = layers.ImgMaxSeq
+ImgSumSeq = layers.ImgSumSeq
+Reorder = layers.Reorder
+Permute = layers.Permute
 
+
+def Gpu():
+    def construct(shape):
+        return layers.Gpu()
+    return Inference(construct)
+
+def Check():
+    def construct(shape):
+        return layers.Check()
+    return Inference(construct)
+
+def Info():
+    def construct(shape):
+        return layers.Info()
+    return Inference(construct)
 
 def RowwiseLSTM(*args, **kw):
-    def construct(arg):
-        assert arg.rank() == 4
-        return arg.add(layers.RowwiseLSTM(arg.size(1), *args, **kw))
-    return Composable(construct)
+    def construct(shape):
+        assert len(shape) == 4
+        return layers.RowwiseLSTM(shape[1], *args, **kw)
+    return Inference(construct)
 
 
 def Lstm1(*args, **kw):
-    def construct(arg):
-        assert arg.rank() == 3
-        return arg.add(layers.Lstm1(arg.size(1), *args, **kw))
-    return Composable(construct)
+    def construct(shape):
+        assert len(shape) == 3
+        return layers.Lstm1(shape[1], *args, **kw)
+    return Inference(construct)
 
 
 def Lstm2(*args, **kw):
-    def construct(arg):
-        assert arg.rank() == 4
-        return arg.add(layers.Lstm2(arg.size(1), *args, **kw))
-    return Composable(construct)
+    def construct(shape):
+        assert len(shape) == 4
+        return layers.Lstm2(shape[1], *args, **kw)
+    return Inference(construct)
 
 
 def Lstm2to1(*args, **kw):
-    def construct(arg):
-        assert arg.rank() == 4
+    def construct(shape):
+        assert len(shape) == 4
         # BDHW -> LBD
-        return arg.add(layers.Lstm2to1(arg.size(1), *args, **kw))
-    return Composable(construct)
+        return layers.Lstm2to1(shape[1], *args, **kw)
+    return Inference(construct)
 
 
 def Lstm1to0(*args, **kw):
-    def construct(arg):
-        assert arg.rank() == 3
+    def construct(shape):
+        assert len(shape) == 3
         # LBD -> BD
-        return arg.add(layers.Lstm1to0(arg.size(1), *args, **kw))
-    return Composable(construct)
+        return layers.Lstm1to0(shape[1], *args, **kw)
+    return Inference(construct)
 
 
 def Lstm2to0(n1, n2=None):
     n2 = n2 or n1
-    return Lstm2to1(n1) | Lstm1to0(N2)
+    return Seq(Lstm2to1(n1), Lstm1to0(N2))
