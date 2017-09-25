@@ -244,9 +244,9 @@ def Gpu():
         return layers.Gpu()
     return Inference(construct)
 
-def Check():
+def Check(*args, **kw):
     def construct(shape):
-        return layers.Check()
+        return layers.Check(*args, **kw)
     return Inference(construct)
 
 def Info():
