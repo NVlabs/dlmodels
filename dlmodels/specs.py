@@ -34,6 +34,19 @@ class LocalImport(object):
     del self.frame
 
 
+class Sequence(nn.Sequential):
+    def __init__(self, modules, shapes=None):
+        self.shapes = shapes
+        nn.Sequential.__init__(self, *modules)
+    def size(self):
+        return tuple(int(x) for x in self.shapes[1])
+    def _shapestr(self):
+        return "{} -> {}".format(self.shapes[0], self.shapes[1])
+    def __repr__(self):
+        return self._shapestr() + "\n" + nn.Sequential.__repr__(self)
+    def __str__(self):
+        return self._shapestr() + "\n" + nn.Sequential.__str__(self)
+
 class Seq(nn.Sequential):
     def __init__(self, *modules):
         nn.Sequential.__init__(self)
@@ -47,28 +60,19 @@ class Seq(nn.Sequential):
     def infer(self, shape):
         sample = Variable(torch.randn(*shape)) # FIXME
         shape = tuple(int(x) for x in sample.size())
-        self._input_shape = shape
+        input_shape = shape
+        modules = []
         for i, m in enumerate(self._raw_modules):
             if isinstance(m, (Inference, Seq)):
                 m = m.infer(shape)
             sample = m.forward(sample)
             shape = tuple(sample.size())
-            self.add_module("%d"%i, m)
-        self._output_shape = tuple(int(x) for x in shape)
-        return self
+            modules += [m]
+        output_shape = shape
+        return Sequence(modules, shapes=(input_shape, output_shape))
 
     def create(self, *args):
-        self.infer(args)
-        return self
-
-    def __repr__(self):
-        result = "%s -> %s\n" % (self._input_shape, self._output_shape)
-        result += nn.Sequential.__repr__(self)
-        return result
-    def __str__(self):
-        result = "%s -> %s\n" % (self._input_shape, self._output_shape)
-        result += nn.Sequential.__str__(self)
-        return result
+        return self.infer(args)
 
     def __or__(self, other):
         if isinstance(other, Seq):
