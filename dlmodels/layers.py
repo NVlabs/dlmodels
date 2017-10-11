@@ -38,6 +38,12 @@ def bdl2lbd(x):
     return x.permute(2, 0, 1).contiguous()
 
 
+def data(x):
+    if isinstance(x, Variable):
+        return x.data
+    else:
+        return x
+
 def typeas(x, y):
     """Make x the same type as y, for numpy, torch, torch.cuda."""
     assert not isinstance(x, Variable)
@@ -104,8 +110,8 @@ class Check(nn.Module):
         for i in range(len(actual_shape)):
             assert expected_shape[i]<0 or expected_shape[i]==actual_shape[i], \
                    (expected_shape, actual_shape, i)
-        assert x.min() >= self.valid[0], (x.min(), self.valid)
-        assert x.max() <= self.valid[1], (x.max(), self.valid)
+        assert data(x).min() >= self.valid[0], (data(x).min(), self.valid)
+        assert data(x).max() <= self.valid[1], (data(x).max(), self.valid)
         return x
 
 class Reorder(nn.Module):

@@ -58,7 +58,7 @@ class Seq(nn.Sequential):
         return self._output_shape
 
     def infer(self, shape):
-        sample = Variable(torch.randn(*shape)) # FIXME
+        sample = Variable(1e-6*torch.rand(*shape)) # FIXME
         shape = tuple(int(x) for x in sample.size())
         input_shape = shape
         modules = []
